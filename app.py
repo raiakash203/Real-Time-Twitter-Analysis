@@ -23,6 +23,22 @@ from nltk.corpus import stopwords
 from textblob import TextBlob
 import config as c
 
+from io import BytesIO
+
+import pandas as pd
+import base64
+from wordcloud import WordCloud, STOPWORDS
+from PIL import Image
+import numpy as np
+
+
+def plot_wordcloud(data):
+    mask = np.array(Image.open('twitter_mask.png'))
+    wc = WordCloud(width=280, height=280,background_color="white", max_words=2000, mask=mask,font_path='cabin-sketch.bold.ttf',
+                contour_width=3, contour_color='steelblue')
+    wc.fit_words(data)
+
+    return wc.to_image()
 
 
 external_stylesheets = ['https://codepen.io/chriddyp/pen/bWLwgP.css']
@@ -34,7 +50,7 @@ server = app.server
 
 
 app.layout = html.Div(children=[
-    html.H2('Real-time Twitter Sentiment Analysis', style={
+    html.H2('Real-time Twitter Analysis', style={
         'textAlign': 'center'
     }),
 
@@ -43,13 +59,6 @@ app.layout = html.Div(children=[
     html.Div(id='live-update-graph-bottom'),
 
     # Author's Words
-
-    html.Div(
-        className='row',
-        children=[
-            dcc.Markdown("__Author's Words__: Learning by doing is the best practice for a programmer. If you like the project rate it here!![GitHub](https://github.com/Chulong-Li/Real-time-Sentiment-Tracking-on-Twitter-for-Brand-Improvement-and-Trend-Recognition)!✨"),
-        ],style={'width': '35%', 'marginLeft': 70}
-    ),
     html.Br(),
 
     # ABOUT ROW
@@ -109,7 +118,7 @@ app.layout = html.Div(children=[
 
     dcc.Interval(
         id='interval-component-slow',
-        interval=20*10000, # in milliseconds
+        interval=5*10000, # in milliseconds
         n_intervals=0
     )
     ], style={'padding': '20px'})
@@ -124,9 +133,18 @@ def update_graph_live(n):
 
     # Loading data from Heroku PostgreSQL
     conn = sqlite3.connect(c.DATABASE_NAME)
-    mycursor = conn.cursor()
-    query = "SELECT id_str, text, created_at, polarity, user_location, user_followers_count FROM {}".format(c.TABLE_NAME)
+    timenow = (datetime.datetime.utcnow() - datetime.timedelta(hours=0, minutes=30)).strftime('%Y-%m-%d %H:%M:%S')
+    query = "SELECT id_str, text, created_at, polarity,user_location FROM {} WHERE created_at >= '{}'".format(c.TABLE_NAME, timenow)
     df = pd.read_sql(query, con=conn)
+
+    dailytime = (datetime.datetime.now() - datetime.timedelta(days = 1,hours=0, minutes=0)).strftime('%Y-%m-%d')
+    dailytime = dailytime+' 18:30:00'
+    query = "SELECT count(*) FROM {} WHERE created_at >= '{}'".format(c.TABLE_NAME,dailytime)
+    dailycount = pd.read_sql(query, con=conn)
+
+    query = "SELECT count(*) FROM {}".format(c.TABLE_NAME)
+    totaltillnow = pd.read_sql(query, con=conn)
+
     conn.close()
 
     # Convert UTC into PDT
@@ -148,23 +166,10 @@ def update_graph_live(n):
     neg_num = result[result['Time']>min10]["Num of '{}' mentions".format(c.TRACK_WORDS_KEY[0])][result['polarity']==-1].sum()
     pos_num = result[result['Time']>min10]["Num of '{}' mentions".format(c.TRACK_WORDS_KEY[0])][result['polarity']==1].sum()
 
-    # Loading back-up summary data
-    #query = "SELECT daily_user_num, daily_tweets_num, impressions FROM Back_Up;"
-    #back_up = pd.read_sql(query, con=conn)
-    #daily_tweets_num = back_up['daily_tweets_num'].iloc[0] + result[-6:-3]["Num of '{}' mentions".format(c.TRACK_WORDS_KEY[0])].sum()
-    #daily_impressions = back_up['impressions'].iloc[0] + df[df['created_at'] > (datetime.datetime.now() - datetime.timedelta(hours=7, seconds=10))]['user_followers_count'].sum()
-    #cur = conn.cursor()
 
-    #PDT_now = datetime.datetime.now() - datetime.timedelta(hours=7)
-    #if PDT_now.strftime("%H%M")=='0000':
-    #    cur.execute("UPDATE Back_Up SET daily_tweets_num = 0, impressions = 0;")
-    #else:
-    #    cur.execute("UPDATE Back_Up SET daily_tweets_num = {}, impressions = {};".format(daily_tweets_num, daily_impressions))
-    #conn.commit()
-    #cur.close()
-    #conn.close()
-    daily_impressions=0
-    daily_tweets_num=0
+
+    daily_impressions= totaltillnow['count(*)'][0]
+    daily_tweets_num = dailycount['count(*)'][0]
     # Percentage Number of Tweets changed in Last 10 mins
 
     count_now = df[df['created_at'] > min10]['id_str'].count()
@@ -172,76 +177,6 @@ def update_graph_live(n):
     percent = (count_now-count_before)/count_before*100
     # Create the graph
     children = [
-                html.Div([
-                    html.Div([
-                        dcc.Graph(
-                            id='crossfilter-indicator-scatter',
-                            figure={
-                                'data': [
-                                    go.Scatter(
-                                        x=time_series,
-                                        y=result["Num of '{}' mentions".format(c.TRACK_WORDS_KEY[0])][result['polarity']==0].reset_index(drop=True),
-                                        name="Neutrals",
-                                        opacity=0.8,
-                                        mode='lines',
-                                        line=dict(width=0.5, color='rgb(131, 90, 241)'),
-                                        stackgroup='one'
-                                    ),
-                                    go.Scatter(
-                                        x=time_series,
-                                        y=result["Num of '{}' mentions".format(c.TRACK_WORDS_KEY[0])][result['polarity']==-1].reset_index(drop=True).apply(lambda x: -x),
-                                        name="Negatives",
-                                        opacity=0.8,
-                                        mode='lines',
-                                        line=dict(width=0.5, color='rgb(255, 50, 50)'),
-                                        stackgroup='two'
-                                    ),
-                                    go.Scatter(
-                                        x=time_series,
-                                        y=result["Num of '{}' mentions".format(c.TRACK_WORDS_KEY[0])][result['polarity']==1].reset_index(drop=True),
-                                        name="Positives",
-                                        opacity=0.8,
-                                        mode='lines',
-                                        line=dict(width=0.5, color='rgb(184, 247, 212)'),
-                                        stackgroup='three'
-                                    )
-                                ]
-                            }
-                        )
-                    ], style={'width': '73%', 'display': 'inline-block', 'padding': '0 0 0 20'}),
-
-                    html.Div([
-                        dcc.Graph(
-                            id='pie-chart',
-                            figure={
-                                'data': [
-                                    go.Pie(
-                                        labels=['Positives', 'Negatives', 'Neutrals'],
-                                        values=[pos_num, neg_num, neu_num],
-                                        name="View Metrics",
-                                        marker_colors=['rgba(184, 247, 212, 0.6)','rgba(255, 50, 50, 0.6)','rgba(131, 90, 241, 0.6)'],
-                                        textinfo='value',
-                                        hole=.65)
-                                ],
-                                'layout':{
-                                    'showlegend':False,
-                                    'title':'Tweets In Last 10 Mins',
-                                    'annotations':[
-                                        dict(
-                                            text='{0:.1f}K'.format((pos_num+neg_num+neu_num)/1000),
-                                            font=dict(
-                                                size=40
-                                            ),
-                                            showarrow=False
-                                        )
-                                    ]
-                                }
-
-                            }
-                        )
-                    ], style={'width': '27%', 'display': 'inline-block'})
-                ]),
-
                 html.Div(
                     className='row',
                     children=[
@@ -266,7 +201,7 @@ def update_graph_live(n):
                         ),
                         html.Div(
                             children=[
-                                html.P('Potential Impressions Today',
+                                html.P('Total Tweets Till Now',
                                     style={
                                         'fontSize': 17
                                     }
@@ -287,7 +222,7 @@ def update_graph_live(n):
                         ),
                         html.Div(
                             children=[
-                                html.P('Tweets Posted Today',
+                                html.P('Total Tweets Today',
                                     style={
                                         'fontSize': 17
                                     }
@@ -320,8 +255,79 @@ def update_graph_live(n):
 
                     ],
                     style={'marginLeft': 70}
-                )
+                ),
+
+                html.Div([
+                    html.Div([
+                        dcc.Graph(
+                            id='crossfilter-indicator-scatter',
+                            figure={
+                                'data': [
+                                    go.Scatter(
+                                        x=time_series,
+                                        y=result["Num of '{}' mentions".format(c.TRACK_WORDS_KEY[0])][result['polarity']==0].reset_index(drop=True),
+                                        name="Neutrals",
+                                        opacity=0.8,
+                                        mode='lines',
+                                        line=dict(width=0.5, color='rgb(131, 90, 241)'),
+                                        stackgroup='one'
+                                    ),
+                                    go.Scatter(
+                                        x=time_series,
+                                        y=result["Num of '{}' mentions".format(c.TRACK_WORDS_KEY[0])][result['polarity']==-1].reset_index(drop=True).apply(lambda x: -x),
+                                        name="Negatives",
+                                        opacity=0.8,
+                                        mode='lines',
+                                        line=dict(width=0.5, color='rgb(255, 50, 50)'),
+                                        stackgroup='two'
+                                    ),
+                                    go.Scatter(
+                                        x=time_series,
+                                        y=result["Num of '{}' mentions".format(c.TRACK_WORDS_KEY[0])][result['polarity']==1].reset_index(drop=True),
+                                        name="Positives",
+                                        opacity=1,
+                                        mode='lines',
+                                        line=dict(width=0.5, color='rgb(51, 255, 255)'),
+                                        stackgroup='three'
+                                    )
+                                ]
+                            }
+                        )
+                    ], style={'width': '73%', 'display': 'inline-block', 'padding': '0 0 0 20'}),
+
+                    html.Div([
+                        dcc.Graph(
+                            id='pie-chart',
+                            figure={
+                                'data': [
+                                    go.Pie(
+                                        labels=['Positives', 'Negatives', 'Neutrals'],
+                                        values=[pos_num, neg_num, neu_num],
+                                        name="View Metrics",
+                                        marker_colors=['rgba(51, 255, 255, 0.6)','rgba(255, 50, 50, 0.6)','rgba(131, 90, 241, 0.6)'],
+                                        textinfo='value',
+                                        hole=.65)
+                                ],
+                                'layout':{
+                                    'showlegend':False,
+                                    'title':'Tweets In Last 10 Mins',
+                                    'annotations':[
+                                        dict(
+                                            text='{0:.1f}K'.format((pos_num+neg_num+neu_num)/1000),
+                                            font=dict(
+                                                size=40
+                                            ),
+                                            showarrow=False
+                                        )
+                                    ]
+                                }
+
+                            }
+                        )
+                    ], style={'width': '27%', 'display': 'inline-block'})
+                ]),
             ]
+
     return children
 
 
@@ -332,7 +338,7 @@ def update_graph_bottom_live(n):
     # Loading data from Heroku PostgreSQL
     conn = sqlite3.connect(c.DATABASE_NAME)
     mycursor = conn.cursor()
-    timenow = (datetime.datetime.utcnow() - datetime.timedelta(hours=0, minutes=40)).strftime('%Y-%m-%d %H:%M:%S')
+    timenow = (datetime.datetime.utcnow() - datetime.timedelta(hours=0, minutes=30)).strftime('%Y-%m-%d %H:%M:%S')
     query = "SELECT id_str, text, created_at, polarity,user_location FROM {} WHERE created_at >= '{}'".format(c.TABLE_NAME, timenow)
     df = pd.read_sql(query, con=conn)
     conn.close()
@@ -349,12 +355,13 @@ def update_graph_bottom_live(n):
     content = ' '.join(df["text"])
     content = re.sub(r"http\S+", "", content)
     content = content.replace('RT ', ' ').replace('&amp;', 'and')
+    hashtags = c.hastag(content)
     content = re.sub('[^A-Za-z0-9]+', ' ', content)
     content = content.lower()
 
     # Filter constants for states in US
-    STATES,STATE_DICT,INV_STATE_DICT = c.STATES,c.STATE_DICT,c.INV_STATE_DICT
-
+    #STATES,STATE_DICT,INV_STATE_DICT = c.STATES,c.STATE_DICT,c.INV_STATE_DICT
+    STATES,STATE_DICT,INV_STATE_DICT = pickle.load(open('countries.p','rb'))
     # Clean and transform data to enable geo-distribution
     is_in_US=[]
     geo = df[['user_location']]
@@ -386,17 +393,23 @@ def update_graph_bottom_live(n):
     for w in tokenized_word:
         if (w not in stop_words) and (len(w) >= 3):
             filtered_sent.append(w)
-    fdist = FreqDist(filtered_sent)
-    fd = pd.DataFrame(fdist.most_common(16), columns = ["Word","Frequency"]).drop([0]).reindex()
-    fd['Polarity'] = fd['Word'].apply(lambda x: TextBlob(x).sentiment.polarity)
-    fd['Marker_Color'] = fd['Polarity'].apply(lambda x: 'rgba(255, 50, 50, 0.6)' if x < -0.1 else \
-        ('rgba(184, 247, 212, 0.6)' if x > 0.1 else 'rgba(131, 90, 241, 0.6)'))
-    fd['Line_Color'] = fd['Polarity'].apply(lambda x: 'rgba(255, 50, 50, 1)' if x < -0.1 else \
-        ('rgba(184, 247, 212, 1)' if x > 0.1 else 'rgba(131, 90, 241, 1)'))
+
+    fdist = FreqDist(hashtags)
+    fd = pd.DataFrame(fdist.most_common(10), columns = ["Word","Frequency"]).drop([0]).reindex()
+    #fd['Polarity'] = fd['Word'].apply(lambda x: TextBlob(x).sentiment.polarity)
+    #fd['Marker_Color'] = fd['Polarity'].apply(lambda x: 'rgba(255, 50, 50, 0.6)' if x < -0.1 else \
+    #    ('rgba(51, 255, 255, 0.6)' if x > 0.1 else 'rgba(131, 90, 241, 0.6)'))
+    #fd['Line_Color'] = fd['Polarity'].apply(lambda x: 'rgba(255, 50, 50, 1)' if x < -0.1 else \
+    #    ('rgba(51, 255, 255, 1)' if x > 0.1 else 'rgba(131, 90, 241, 1)'))
 
     #print(fd['Marker_Color'].loc[::-1])
-    print(fd['Word'].loc[::-1].tolist())
+    #print(fd['Word'].loc[::-1].tolist())
     #print(geo_dist)
+
+    word_cloud_words = c.datakeyValue(filtered_sent)
+    img = BytesIO()
+    plot_wordcloud(data=word_cloud_words).save(img, format='PNG')
+
 
     # Create the graph
     children = [
@@ -410,20 +423,23 @@ def update_graph_bottom_live(n):
                                     y=fd["Word"].loc[::-1],
                                     name="Freq Dist",
                                     orientation='h',
-                                    marker_color=fd['Marker_Color'].loc[::-1].tolist(),
-                                    marker=dict(
-                                        line=dict(
-                                            color=fd['Line_Color'].loc[::-1].tolist(),
-                                            width=1),
-                                        ),
+                                    #marker_color=fd['Marker_Color'].loc[::-1].tolist(),
+                                    #marker=dict(
+                                    #    line=dict(
+                                    #        color=fd['Line_Color'].loc[::-1].tolist(),
+                                    #        width=1),
+                                    #    ),
                                 )
                             ],
                             'layout':{
-                                'hovermode':"closest"
+                                'hovermode':"closest",
+                                'title' : 'Top Hashtags in last half hour'
                             }
                         }
                     )
                 ], style={'width': '49%', 'display': 'inline-block', 'padding': '0 0 0 20'}),
+
+
                 html.Div([
                     dcc.Graph(
                         id='y-time-series',
@@ -438,7 +454,7 @@ def update_graph_bottom_live(n):
                                     geo = 'geo',
                                     colorbar_title = "Num in Log2",
                                     marker_line_color='white',
-                                    colorscale = ["#fdf7ff", "#835af1"],
+                                    colorscale = ["rgb(234, 234, 250)", "rgb(19, 19, 83)"],
                                     #autocolorscale=False,
                                     #reversescale=True,
                                 )
@@ -450,8 +466,14 @@ def update_graph_bottom_live(n):
                         }
 
                     )
-                ], style={'display': 'inline-block', 'width': '49%'})
-            ]
+                ], style={'display': 'inline-block', 'width': '51%'}),
+                html.Div(
+                 children=[
+                            html.P("WordCloud of top words in Tweet ",style={"text-align":"center","font-family": '"Open Sans", verdana, arial, sans-serif','font-size': '17px','fill': 'rgb(68, 68, 68)','opacity': '1','font-weight': 'normal','white-space': 'pre'}),
+                            html.Img(src='data:image/png;base64,{}'.format(base64.b64encode(img.getvalue()).decode()),style={'height': '350px','display': 'block','margin-left': 'auto','margin-right': 'auto'})
+                        ]
+            )
+        ]
     return children
 
 

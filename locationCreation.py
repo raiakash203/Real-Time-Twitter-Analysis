@@ -4,20 +4,16 @@ import pickle
 
 locationdata = pd.read_csv('worldcities.csv')
 locationdata = locationdata[['city_ascii','country','iso2','iso3']]
-Location = locationdata['city_ascii'].tolist()
+STATES = locationdata['city_ascii'].tolist()
+iso3_l = locationdata['iso3'].tolist()
+STATE_DICT={}
+for k,v in zip(STATES,iso3_l):
+    STATE_DICT[k]=v
 country = locationdata['country'].tolist()
-Location.extend(list(set(country)))
-countrycode = locationdata['iso3'].tolist()
-countrycode.extend(list(set(countrycode)))
-location_dict = {}
-for key,val in zip(Location,countrycode):
-    location_dict[key]=val
-
-STATES = Location
-STATE_DICT = location_dict
-INV_STATE_DICT={}
-for value,key in zip(locationdata['country'],locationdata['iso3']):
-    INV_STATE_DICT[key]=value
-
+for k,v in zip(country,iso3_l):
+    STATE_DICT[k]=v
+INV_STATE_DICT = {}
+for k,v in zip(iso3_l,country):
+    INV_STATE_DICT[k]=v
 data = [STATES,STATE_DICT,INV_STATE_DICT]
 pickle.dump(data, open( "countries.p", "wb" ) )

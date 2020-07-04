@@ -2,11 +2,22 @@ from datetime import datetime, timezone
 from dateutil import tz
 import datetime
 import pickle
+from nltk.probability import FreqDist
+import re
+
 
 DATABASE_NAME = 'Twitterdata.db'
 TABLE_NAME = "Tweets"
 STATES,STATE_DICT,INV_STATE_DICT = pickle.load(open('countries.p','rb'))
 TRACK_WORDS_KEY=["COVID19"]
+
+def datakeyValue(words):
+    fdist = FreqDist(words)
+    d_k_v = {a: x for a, x in fdist.most_common(2000)}
+    return d_k_v
+
+def hastag(text):
+    return re.findall(r'\B#\w*[a-zA-Z]+\w*', text)
 
 def clean_tweet(self, tweet):
     '''

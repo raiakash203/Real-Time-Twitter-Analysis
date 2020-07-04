@@ -1,0 +1,5 @@
+venv
+codealpha
+*.pyc
+.DS_Store
+.env
